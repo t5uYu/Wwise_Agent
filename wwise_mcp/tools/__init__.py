@@ -7,6 +7,7 @@ from .query import (
     get_soundbank_info,
     get_rtpc_list,
     get_selected_objects,
+    get_effect_chain,
 )
 from .action import (
     create_object,
@@ -16,6 +17,9 @@ from .action import (
     delete_object,
     move_object,
     preview_event,
+    set_rtpc_binding,
+    add_effect,
+    remove_effect,
 )
 from .verify import (
     verify_structure,
@@ -33,6 +37,7 @@ __all__ = [
     "get_soundbank_info",
     "get_rtpc_list",
     "get_selected_objects",
+    "get_effect_chain",
     # Action
     "create_object",
     "set_property",
@@ -41,6 +46,9 @@ __all__ = [
     "delete_object",
     "move_object",
     "preview_event",
+    "set_rtpc_binding",
+    "add_effect",
+    "remove_effect",
     # Verify
     "verify_structure",
     "verify_event_completeness",

@@ -1,6 +1,6 @@
 """
 WwiseMCP Server
-FastMCP instance + 19 tools + lifecycle management
+FastMCP instance + 22 tools + lifecycle management
 
 Start:
   python -m wwise_mcp.server          # stdio mode (Cursor / Claude Desktop)
@@ -30,6 +30,7 @@ from .tools import (
     get_soundbank_info,
     get_rtpc_list,
     get_selected_objects,
+    get_effect_chain,
     # Action
     create_object,
     set_property,
@@ -38,6 +39,9 @@ from .tools import (
     delete_object,
     move_object,
     preview_event,
+    set_rtpc_binding,
+    add_effect,
+    remove_effect,
     # Verify
     verify_structure,
     verify_event_completeness,
@@ -82,7 +86,7 @@ async def _ensure_connection():
 
 
 # ------------------------------------------------------------------
-# Query tools (8)
+# Query tools (9)
 # ------------------------------------------------------------------
 
 @mcp.tool()
@@ -195,8 +199,23 @@ async def tool_get_rtpc_list(max_results: int = 50) -> dict:
     return await get_rtpc_list(max_results)
 
 
+@mcp.tool()
+async def tool_get_effect_chain(object_path: str) -> dict:
+    """
+    Get the Effect chain (all Effect slots) of an object or Bus.
+
+    Args:
+        object_path: Target object/Bus path
+
+    Returns the list of effects in slots 0-3, including name, type,
+    and plugin info for each occupied slot.
+    """
+    await _ensure_connection()
+    return await get_effect_chain(object_path)
+
+
 # ------------------------------------------------------------------
-# Action tools (7)
+# Action tools (10)
 # ------------------------------------------------------------------
 
 @mcp.tool()
@@ -320,6 +339,89 @@ async def tool_move_object(object_path: str, new_parent_path: str) -> dict:
     """
     await _ensure_connection()
     return await move_object(object_path, new_parent_path)
+
+
+@mcp.tool()
+async def tool_set_rtpc_binding(
+    object_path: str,
+    game_parameter_path: str,
+    property_name: str = "Volume",
+    curve_points: list[dict] | None = None,
+    notes: str = "",
+) -> dict:
+    """
+    Bind a Game Parameter (RTPC) to an object property with a control curve.
+
+    This is THE tool for automating RTPC setup — creates the binding via
+    ak.wwise.core.object.set on the object's @RTPC list.
+
+    Args:
+        object_path:         Target object path (Sound/Container/Bus)
+        game_parameter_path: Game Parameter path, e.g. '\\\\Game Parameters\\\\Default Work Unit\\\\Distance'
+        property_name:       Property to control: 'Volume', 'Pitch', 'LowPassFilter', 'OutputBusVolume' etc.
+        curve_points:        Curve points list, each {"x": float, "y": float, "shape": str}.
+                             shape: Linear / Log1~3 / Exp1~3 / SCurve / InvertedSCurve / Constant.
+                             Default: linear flat curve [(0,0,Linear), (100,0,Linear)]
+        notes:               Optional RTPC notes
+
+    Example: Bind Distance RTPC to Volume with attenuation curve:
+        object_path='\\\\Actor-Mixer Hierarchy\\\\...\\\\MySound'
+        game_parameter_path='\\\\Game Parameters\\\\Default Work Unit\\\\Distance'
+        property_name='Volume'
+        curve_points=[{"x":0,"y":0,"shape":"Linear"},{"x":100,"y":-96,"shape":"Log3"}]
+    """
+    await _ensure_connection()
+    return await set_rtpc_binding(object_path, game_parameter_path, property_name, curve_points, notes)
+
+
+@mcp.tool()
+async def tool_add_effect(
+    object_path: str,
+    effect_name: str,
+    effect_plugin: str,
+    effect_slot: int = 0,
+    effect_params: dict | None = None,
+) -> dict:
+    """
+    Add an Effect plug-in to an object or Bus.
+
+    Creates an Effect via ak.wwise.core.object.set on the object's @Effects list.
+
+    Args:
+        object_path:   Target object/Bus path
+        effect_name:   Effect instance name, e.g. 'MyReverb'
+        effect_plugin: Plug-in type name or classId number.
+                       Available types: RoomVerb / Delay / Compressor / Expander /
+                       PeakLimiter / ParametricEQ / MeterFX / GainFX / MatrixReverb /
+                       Flanger / TremoloFX / Harmonizer / StereoDelay /
+                       GuitarDistortion / TimeStretch / PitchShifter
+        effect_slot:   Effect slot number (0-3), default 0
+        effect_params: Optional plug-in parameters, e.g. {"@PreDelay": 24}
+
+    Example: Add RoomVerb to a Bus:
+        object_path='\\\\Master-Mixer Hierarchy\\\\Master Audio Bus\\\\SFX'
+        effect_name='SFX_Reverb'
+        effect_plugin='RoomVerb'
+    """
+    await _ensure_connection()
+    return await add_effect(object_path, effect_name, effect_plugin, effect_slot, effect_params)
+
+
+@mcp.tool()
+async def tool_remove_effect(object_path: str) -> dict:
+    """
+    Remove all Effects from an object or Bus (clears all Effect slots).
+
+    To selectively remove one Effect while keeping others:
+    1. Call get_effect_chain to see current effects
+    2. Call remove_effect to clear all
+    3. Call add_effect to re-add the ones you want to keep
+
+    Args:
+        object_path: Target object/Bus path
+    """
+    await _ensure_connection()
+    return await remove_effect(object_path)
 
 
 # ------------------------------------------------------------------
