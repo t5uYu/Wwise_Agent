@@ -72,7 +72,15 @@ BLOCK_2_OBJECT_MODEL = """
 RTPC（Real-Time Parameter Control）将 Game Parameter 驱动到对象属性：
 - 常用绑定：Distance → Volume（衰减）、Speed → Pitch、HP → Lowpass
 - 曲线类型：Linear / Log1~3 / Exp1~3 / SCurve / InvertedSCurve
-- RTPC 绑定需在 Wwise 属性编辑器中手动完成（右键属性 → Add RTPC），API 不支持自动化
+- RTPC 绑定可通过 set_rtpc_binding 工具自动完成，无需手动操作
+- 绑定前确保 Game Parameter 已存在（可通过 get_rtpc_list 查询或 create_object 创建）
+
+### Effect 系统
+
+Effect 插件可挂载到 Sound/Bus 的 Effect 插槽（Effect0~Effect3）：
+- 常用 Effect：RoomVerb (classId=7733251)、Delay (classId=8454147)、Compressor (classId=613752611)
+- 通过 add_effect 工具自动添加 Effect 到对象，通过 remove_effect 移除
+- 通过 get_effect_chain 查询对象当前的 Effect 链
 """.strip()
 
 # ============================================================

@@ -185,3 +185,32 @@ class WwiseAdapter:
             {"return": ["name", "type", "path", "id"]},
         )
         return result.get("objects", [])
+
+    # ------------------------------------------------------------------
+    # object.set — 批量操作（RTPC / Effect / 复杂创建）
+    # ------------------------------------------------------------------
+
+    async def object_set(
+        self,
+        objects: list[dict],
+        on_name_conflict: str = "rename",
+        list_mode: str = "append",
+    ) -> dict:
+        """
+        调用 ak.wwise.core.object.set 执行批量操作。
+
+        这是 RTPC 绑定、Effect 设置等复杂操作的底层端点。
+        与 object.create 不同，object.set 可以操作对象的 list 属性
+        （如 @RTPC、@Effects）以及创建插件对象（通过 classId）。
+
+        Args:
+            objects:          objects 数组，每个元素包含 "object" 标识和要设置的属性/列表
+            on_name_conflict: 名称冲突策略：'rename' | 'replace' | 'fail' | 'merge'
+            list_mode:        列表操作模式：'append'（追加）| 'replaceAll'（替换全部）
+        """
+        args: dict[str, Any] = {
+            "objects": objects,
+            "onNameConflict": on_name_conflict,
+            "listMode": list_mode,
+        }
+        return await self.call("ak.wwise.core.object.set", args)
