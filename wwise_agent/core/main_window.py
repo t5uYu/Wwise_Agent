@@ -28,9 +28,13 @@ class MainWindow(QtWidgets.QMainWindow):
         self.setWindowFlags(QtCore.Qt.Window)
         
         # 深邃蓝黑背景（与 aiTab glassmorphism 主题匹配）
-        self.setStyleSheet("QMainWindow { background-color: #0a0a12; }")
+        self.setStyleSheet("""
+            QMainWindow { background-color: #0a0a12; }
+            QWidget { background-color: #0a0a12; color: #e2e8f0; }
+        """)
         
         central_widget = QtWidgets.QWidget()
+        central_widget.setObjectName("centralWidget")
         self.setCentralWidget(central_widget)
         
         self.force_quit = False

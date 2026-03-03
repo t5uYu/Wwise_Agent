@@ -204,7 +204,7 @@ class AITab(
         self._agentStopped.connect(self._on_agent_stopped)
         self._updateTodo.connect(self._on_update_todo)
         self._addSystemShell.connect(self._on_add_system_shell)
-        self._executeToolRequest.connect(self._on_execute_tool_main_thread, QtCore.Qt.BlockingQueuedConnection)
+        # _executeToolRequest: 预留信号，暂未使用
         self._addThinking.connect(self._on_add_thinking)
         self._finalizeThinkingSignal.connect(self._finalize_thinking_main_thread)
         self._resumeThinkingSignal.connect(self._resume_thinking_main_thread)

@@ -372,6 +372,23 @@ class TokenOptimizer:
                 parts.append(f"  ... 还有 {len(ai_responses) - 12} 条")
         return "\n".join(parts)
 
+    def optimize_system_prompt(self, prompt: str, max_length: int = 1800) -> str:
+        """优化系统提示词：压缩冗余空行/注释，超长截断"""
+        if not prompt:
+            return ""
+        # 移除多余空行
+        prompt = re.sub(r'\n{3,}', '\n\n', prompt)
+        # 移除注释性说明行
+        prompt = re.sub(r'^\s*//.*$', '', prompt, flags=re.MULTILINE)
+        prompt = prompt.strip()
+        # 按 token 截断
+        tokens = self.estimate_tokens(prompt)
+        if tokens > max_length:
+            # 粗估每 token 约 3.5 字符
+            char_limit = int(max_length * 3.5)
+            prompt = prompt[:char_limit] + "\n..."
+        return prompt
+
     def should_compress(self, current_tokens: int, limit: Optional[int] = None) -> Tuple[bool, str]:
         limit = limit or self.budget.max_tokens
         if current_tokens >= limit * self.budget.emergency_threshold:

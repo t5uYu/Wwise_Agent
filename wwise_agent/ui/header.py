@@ -34,6 +34,7 @@ class HeaderMixin:
         self.provider_combo.addItem("GLM", 'glm')
         self.provider_combo.addItem("OpenAI", 'openai')
         self.provider_combo.addItem("Duojie", 'duojie')
+        self.provider_combo.addItem("WLAI", 'wlai')
         self.provider_combo.setMinimumWidth(70)
         self.provider_combo.setSizePolicy(QtWidgets.QSizePolicy.Preferred, QtWidgets.QSizePolicy.Fixed)
         row.addWidget(self.provider_combo)
@@ -61,6 +62,20 @@ class HeaderMixin:
                 'MiniMax-M2.5',
                 'qwen3.5-plus',
             ],
+            'wlai': [
+                'gpt-4o',
+                'gpt-4o-mini',
+                'gpt-4-turbo',
+                'claude-sonnet-4-20250514',
+                'claude-sonnet-4-6',
+                'claude-opus-4-6',
+                'claude-3-5-sonnet-20241022',
+                'claude-3-haiku-20240307',
+                'deepseek-chat',
+                'deepseek-reasoner',
+                'gemini-2.0-flash',
+                'gemini-1.5-pro',
+            ],
         }
         self._model_context_limits = {
             'qwen2.5:14b': 32000, 'qwen2.5:7b': 32000, 'llama3:8b': 8000, 'mistral:7b': 32000,
@@ -80,6 +95,17 @@ class HeaderMixin:
             'kimi-k2.5': 128000,
             'MiniMax-M2.5': 128000,
             'qwen3.5-plus': 128000,
+            # WLAI 模型
+            'gpt-4o': 128000,
+            'gpt-4o-mini': 128000,
+            'gpt-4-turbo': 128000,
+            'claude-sonnet-4-20250514': 200000,
+            'claude-sonnet-4-6': 200000,
+            'claude-opus-4-6': 200000,
+            'claude-3-5-sonnet-20241022': 200000,
+            'claude-3-haiku-20240307': 200000,
+            'gemini-2.0-flash': 128000,
+            'gemini-1.5-pro': 128000,
         }
         # 模型特性配置
         self._model_features = {
@@ -103,6 +129,17 @@ class HeaderMixin:
             'kimi-k2.5':                  {'supports_prompt_caching': True, 'supports_vision': False},
             'MiniMax-M2.5':               {'supports_prompt_caching': True, 'supports_vision': False},
             'qwen3.5-plus':               {'supports_prompt_caching': True, 'supports_vision': False},
+            # WLAI 模型
+            'gpt-4o':                     {'supports_prompt_caching': True, 'supports_vision': True},
+            'gpt-4o-mini':                {'supports_prompt_caching': True, 'supports_vision': True},
+            'gpt-4-turbo':                {'supports_prompt_caching': True, 'supports_vision': True},
+            'claude-sonnet-4-20250514':   {'supports_prompt_caching': True, 'supports_vision': True},
+            'claude-sonnet-4-6':          {'supports_prompt_caching': True, 'supports_vision': True},
+            'claude-opus-4-6':            {'supports_prompt_caching': True, 'supports_vision': True},
+            'claude-3-5-sonnet-20241022': {'supports_prompt_caching': True, 'supports_vision': True},
+            'claude-3-haiku-20240307':    {'supports_prompt_caching': True, 'supports_vision': True},
+            'gemini-2.0-flash':           {'supports_prompt_caching': True, 'supports_vision': True},
+            'gemini-1.5-pro':             {'supports_prompt_caching': True, 'supports_vision': True},
         }
         self._refresh_models('ollama')
         self.model_combo.setMinimumWidth(100)

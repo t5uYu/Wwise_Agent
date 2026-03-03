@@ -872,6 +872,7 @@ class AIClient:
     OLLAMA_API_URL = "http://localhost:11434/v1/chat/completions"
     DUOJIE_API_URL = "https://api.duojie.games/v1/chat/completions"
     DUOJIE_ANTHROPIC_API_URL = "https://api.duojie.games/v1/messages"
+    WLAI_API_URL = "https://api3.wlai.vip/v1/chat/completions"
     
     _DUOJIE_ANTHROPIC_MODELS = frozenset({'glm-4.7', 'glm-5'})
 
@@ -890,6 +891,7 @@ class AIClient:
             'glm': self._read_api_key('glm'),
             'ollama': 'ollama',
             'duojie': self._read_api_key('duojie'),
+            'wlai': self._read_api_key('wlai'),
         }
         self._ssl_context = self._create_ssl_context()
         self._web_searcher = WebSearcher()
@@ -1176,6 +1178,7 @@ class AIClient:
             'deepseek': ['DEEPSEEK_API_KEY', 'DCC_AI_DEEPSEEK_API_KEY'],
             'glm': ['GLM_API_KEY', 'ZHIPU_API_KEY', 'DCC_AI_GLM_API_KEY'],
             'duojie': ['DUOJIE_API_KEY', 'DCC_AI_DUOJIE_API_KEY'],
+            'wlai': ['WLAI_API_KEY', 'DCC_AI_WLAI_API_KEY'],
         }
         for env_var in env_map.get(provider, []):
             key = os.environ.get(env_var)
@@ -1186,6 +1189,7 @@ class AIClient:
             key_map = {
                 'openai': 'openai_api_key', 'deepseek': 'deepseek_api_key',
                 'glm': 'glm_api_key', 'duojie': 'duojie_api_key',
+                'wlai': 'wlai_api_key',
             }
             return cfg.get(key_map.get(provider, '')) or None
         return None
@@ -1240,13 +1244,15 @@ class AIClient:
             if model and self._is_anthropic_protocol(provider, model):
                 return self.DUOJIE_ANTHROPIC_API_URL
             return self.DUOJIE_API_URL
+        elif provider == 'wlai':
+            return self.WLAI_API_URL
         return self.OPENAI_API_URL
 
     def _get_vendor_name(self, provider: str) -> str:
         names = {
             'openai': 'OpenAI', 'deepseek': 'DeepSeek',
             'glm': 'GLM（智谱AI）', 'ollama': 'Ollama',
-            'duojie': '拼好饭',
+            'duojie': '拼好饭', 'wlai': 'WLAI',
         }
         return names.get(provider, provider)
     
