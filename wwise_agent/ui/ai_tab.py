@@ -28,6 +28,7 @@ from .i18n import tr, get_language
 from ..utils.ai_client import AIClient, WWISE_TOOLS
 from ..utils.wwise_backend import WwiseToolExecutor
 from ..utils.token_optimizer import TokenOptimizer, TokenBudget, CompressionStrategy
+from ..utils.ultra_optimizer import UltraOptimizer
 from ..utils.memory_store import get_memory_store
 from ..utils.reward_engine import get_reward_engine
 from ..utils.reflection import get_reflection_module
@@ -37,6 +38,11 @@ from .cursor_widgets import (
     CursorTheme,
     UserMessage,
     AIResponse,
+    PlanBlock,
+    PlanViewer,
+    StreamingPlanCard,
+    AskQuestionCard,
+    CollapsibleContent,
     StatusLine,
     ChatInput,
     SendButton,
@@ -54,6 +60,9 @@ from .input_area import InputAreaMixin
 from .chat_view import ChatViewMixin
 from ..core.agent_runner import AgentRunnerMixin
 from ..core.session_manager import SessionManagerMixin
+
+# ★ Plan 模式
+from ..utils.plan_manager import get_plan_manager, PLAN_TOOL_CREATE, PLAN_TOOL_UPDATE_STEP, PLAN_TOOL_ASK_QUESTION
 
 
 class AITab(
@@ -82,6 +91,13 @@ class AITab(
     _showToolStatus = QtCore.Signal(str)                 # 显示工具执行状态
     _hideToolStatus = QtCore.Signal()                    # 隐藏工具执行状态
     _showGenerating = QtCore.Signal()                    # 显示 "Generating..." 状态
+    _showPlanning = QtCore.Signal(str)                   # 显示 "Planning..." 进度 (progress_text)
+    _createStreamingPlan = QtCore.Signal()               # 创建流式 Plan 预览卡片
+    _updateStreamingPlan = QtCore.Signal(str)            # 更新流式 Plan 预览卡片内容 (accumulated_json)
+    _renderPlanViewer = QtCore.Signal(dict)              # Plan 模式：在主线程渲染 PlanViewer 卡片
+    _updatePlanStep = QtCore.Signal(str, str, str)       # Plan 模式：更新步骤状态 (step_id, status, result_summary)
+    _askQuestionRequest = QtCore.Signal()                # Plan 模式：ask_question 请求
+    _toolArgsDelta = QtCore.Signal(str, str, str)        # 工具参数增量 (tool_name, delta, accumulated)
     _autoTitleDone = QtCore.Signal(str, str)             # 自动标题完成: (session_id, title)
     _confirmToolRequest = QtCore.Signal()                # 确认模式：请求确认
     _confirmToolResult = QtCore.Signal(bool)             # 确认模式：结果
@@ -129,6 +145,12 @@ class AITab(
         self._cached_optimized_system_prompt: Optional[str] = None
         self._cached_optimized_tools: Optional[List[dict]] = None
         self._cached_optimized_tools_no_web: Optional[List[dict]] = None
+        
+        # ★ Plan 模式状态
+        self._plan_manager = None          # PlanManager 实例（延迟初始化）
+        self._plan_phase = 'idle'          # idle | planning | awaiting_confirmation | executing | completed
+        self._active_plan_viewer = None    # 当前活跃的 PlanViewer/StreamingPlanCard
+        self._streaming_plan_card = None   # 流式 Plan 预览卡片
         
         # Token 优化器
         self.token_optimizer = TokenOptimizer()
@@ -191,6 +213,13 @@ class AITab(
         self._showGenerating.connect(self._on_show_generating)
         self._autoTitleDone.connect(self._on_auto_title_done)
         self._confirmToolRequest.connect(self._on_confirm_tool_request, QtCore.Qt.QueuedConnection)
+        self._toolArgsDelta.connect(self._on_tool_args_delta)
+        self._showPlanning.connect(self._on_show_planning)
+        self._createStreamingPlan.connect(self._on_create_streaming_plan, QtCore.Qt.QueuedConnection)
+        self._updateStreamingPlan.connect(self._on_update_streaming_plan)
+        self._renderPlanViewer.connect(self._on_render_plan_viewer, QtCore.Qt.QueuedConnection)
+        self._updatePlanStep.connect(self._on_update_plan_step, QtCore.Qt.QueuedConnection)
+        self._askQuestionRequest.connect(self._on_render_ask_question, QtCore.Qt.QueuedConnection)
         
         # 构建并缓存系统提示词
         self._system_prompt_think = self._build_system_prompt(with_thinking=True)
@@ -554,7 +583,8 @@ Memory System:
         personality_text = self._get_personality_injection()
         if personality_text:
             base_prompt = base_prompt + "\n" + personality_text
-        return base_prompt
+        # 使用极致优化器压缩（移除冗余空行和注释）
+        return UltraOptimizer.compress_system_prompt(base_prompt)
 
     # ==========================================================
     # UI 构建
@@ -1449,8 +1479,17 @@ Memory System:
         WAAPI 全部通过 WebSocket 通信，不需要主线程约束。
         """
         # Ask 模式安全守卫
-        if not self._agent_mode and tool_name not in self._ASK_MODE_TOOLS:
+        if not self._agent_mode and not self._plan_mode and tool_name not in self._ASK_MODE_TOOLS:
             return {"success": False, "error": tr('ask.restricted', tool_name)}
+        
+        # ★ Plan 规划阶段安全守卫
+        if self._plan_mode and self._plan_phase == 'planning':
+            allowed = self._PLAN_PLANNING_TOOLS | {'create_plan'}
+            if tool_name not in allowed:
+                return {
+                    "success": False,
+                    "error": f"Plan 规划阶段不允许执行 {tool_name}，只能使用查询工具和 create_plan"
+                }
         
         # 确认模式
         if self._confirm_mode and tool_name in self._CONFIRM_TOOLS:
@@ -1461,6 +1500,16 @@ Memory System:
         self._showToolStatus.emit(tool_name)
         
         try:
+            # ★ Plan 模式专用工具处理
+            if tool_name == "create_plan":
+                return self._handle_create_plan(kwargs)
+            
+            elif tool_name == "update_plan_step":
+                return self._handle_update_plan_step(kwargs)
+            
+            elif tool_name == "ask_question":
+                return self._handle_ask_question(kwargs)
+            
             # Todo 工具
             if tool_name == "add_todo":
                 todo_id = kwargs.get("todo_id", "")
@@ -1489,10 +1538,275 @@ Memory System:
         except Exception as e:
             import traceback
             return {"success": False, "error": tr('ai.bg_exec_err', f"{e}\n{traceback.format_exc()[:300]}")}
+
+    # ------------------------------------------------------------------
+    # Plan 模式工具处理
+    # ------------------------------------------------------------------
+
+    def _handle_create_plan(self, kwargs: dict) -> dict:
+        """处理 create_plan 工具调用（后台线程）"""
+        try:
+            if self._plan_manager is None:
+                self._plan_manager = get_plan_manager()
+            plan_data = self._plan_manager.create_plan(self._session_id, kwargs)
+            self._plan_phase = 'awaiting_confirmation'
+            self._showGenerating.emit()
+            self._renderPlanViewer.emit(plan_data)
+            return {
+                "success": True,
+                "result": f"Plan '{plan_data.get('title', '')}' created with {len(plan_data.get('steps', []))} steps. Waiting for user confirmation."
+            }
+        except Exception as e:
+            return {"success": False, "error": f"Failed to create plan: {e}"}
+
+    def _handle_update_plan_step(self, kwargs: dict) -> dict:
+        """处理 update_plan_step 工具调用（后台线程）"""
+        try:
+            if self._plan_manager is None:
+                self._plan_manager = get_plan_manager()
+            step_id = kwargs.get('step_id', '')
+            status = kwargs.get('status', 'done')
+            result_summary = kwargs.get('result_summary', '')
+            plan = self._plan_manager.update_step(
+                self._session_id, step_id, status, result_summary
+            )
+            if not plan:
+                return {"success": False, "error": f"No active plan found for session {self._session_id}"}
+            self._updatePlanStep.emit(step_id, status, result_summary or '')
+            if plan.get('status') == 'completed':
+                self._plan_phase = 'completed'
+            return {
+                "success": True,
+                "result": f"Step {step_id} updated to '{status}'"
+            }
+        except Exception as e:
+            return {"success": False, "error": f"Failed to update plan step: {e}"}
+
+    def _handle_ask_question(self, kwargs: dict) -> dict:
+        """处理 ask_question 工具调用（后台线程）"""
+        questions = kwargs.get('questions', [])
+        if not questions:
+            return {"success": False, "error": "No questions provided"}
+
+        self._ask_question_result_queue = queue.Queue()
+        self._pending_ask_questions = questions
+        self._askQuestionRequest.emit()
+
+        try:
+            result = self._ask_question_result_queue.get(timeout=300.0)
+            if result is None:
+                return {"success": True, "result": "User skipped the questions."}
+            answer_lines = []
+            for q_id, selections in result.items():
+                readable = []
+                for sel in selections:
+                    if sel.startswith("__free_text__:"):
+                        readable.append(sel.replace("__free_text__:", ""))
+                    else:
+                        readable.append(sel)
+                answer_lines.append(f"{q_id}: {', '.join(readable)}")
+            return {
+                "success": True,
+                "result": f"User answered:\n" + "\n".join(answer_lines)
+            }
+        except queue.Empty:
+            return {"success": True, "result": "User did not answer within the time limit."}
+
+    # ------------------------------------------------------------------
+    # Plan 模式 UI 渲染 Slots
+    # ------------------------------------------------------------------
+
+    @QtCore.Slot()
+    def _on_render_ask_question(self):
+        """主线程：在聊天流中插入 AskQuestionCard"""
+        q = getattr(self, '_ask_question_result_queue', None)
+        questions = getattr(self, '_pending_ask_questions', [])
+
+        if not q:
+            return
+
+        try:
+            card = AskQuestionCard(questions, parent=self.chat_container)
+        except Exception as e:
+            print(f"[AskQuestion] Create failed: {e}")
+            q.put(None)
+            return
+
+        def _on_answered(answers: dict):
+            q.put(answers)
+
+        def _on_cancelled():
+            q.put(None)
+
+        card.answered.connect(_on_answered)
+        card.cancelled.connect(_on_cancelled)
+
+        try:
+            self.chat_layout.insertWidget(self.chat_layout.count() - 1, card)
+        except Exception as e:
+            print(f"[AskQuestion] Insert failed: {e}")
+            q.put(None)
+            return
+
+        card.setVisible(True)
+        try:
+            self._scroll_to_bottom(force=True)
+        except Exception:
+            pass
+
+    def _show_plan_generation_progress(self, accumulated: str):
+        """从 create_plan 的流式参数中提取进度信息并显示 Planning... 状态"""
+        import re as _re
+        step_ids = _re.findall(r'"id"\s*:\s*"(step-\d+)"', accumulated)
+        title_match = _re.search(r'"title"\s*:\s*"([^"]{1,30})', accumulated)
+        title_part = title_match.group(1) if title_match else ""
+
+        has_arch = '"architecture"' in accumulated
+        arch_nodes = _re.findall(r'"id"\s*:\s*"(?!step-)([^"]+)"', accumulated)
+
+        if has_arch and arch_nodes:
+            progress = f"architecture ({len(arch_nodes)} nodes)"
+        elif step_ids:
+            progress = f"step {len(step_ids)}"
+            if title_part:
+                progress = f"\u300c{title_part}\u300d {progress}"
+        elif title_part:
+            progress = f"\u300c{title_part}\u300d"
+        else:
+            progress = ""
+
+        self._showPlanning.emit(progress)
+
+    @QtCore.Slot()
+    def _on_create_streaming_plan(self):
+        """主线程：创建流式 Plan 预览卡片并插入聊天流"""
+        try:
+            if self._streaming_plan_card is not None:
+                self._streaming_plan_card.setParent(None)
+                self._streaming_plan_card.deleteLater()
+
+            card = StreamingPlanCard(parent=self.chat_container)
+            self._streaming_plan_card = card
+            self.chat_layout.insertWidget(self.chat_layout.count() - 1, card)
+            self._scroll_to_bottom(force=True)
+        except Exception as e:
+            print(f"[Plan] Create streaming card error: {e}")
+
+    @QtCore.Slot(str)
+    def _on_update_streaming_plan(self, accumulated: str):
+        """主线程：将流式 JSON 碎片增量渲染到流式 Plan 卡片"""
+        self._streaming_plan_acc = accumulated
+        if not getattr(self, '_streaming_plan_timer_active', False):
+            self._streaming_plan_timer_active = True
+            QtCore.QTimer.singleShot(150, self._flush_streaming_plan)
+
+    def _flush_streaming_plan(self):
+        """实际执行流式 Plan 卡片更新"""
+        self._streaming_plan_timer_active = False
+        if self._streaming_plan_card is None:
+            return
+        acc = getattr(self, '_streaming_plan_acc', '')
+        if not acc:
+            return
+        try:
+            old_count = self._streaming_plan_card._rendered_step_count
+            self._streaming_plan_card.update_from_accumulated(acc)
+            new_count = self._streaming_plan_card._rendered_step_count
+            if new_count > old_count:
+                self._scroll_to_bottom()
+        except Exception as e:
+            print(f"[Plan] Update streaming card error: {e}")
+
+    def _on_render_plan_viewer(self, plan_data: dict):
+        """主线程：将流式 Plan 卡片原地升级为完整交互卡片"""
+        try:
+            if self._streaming_plan_card is not None:
+                card = self._streaming_plan_card
+                card.finalize_with_data(plan_data)
+                card.planConfirmed.connect(self._on_plan_confirmed)
+                card.planRejected.connect(self._on_plan_rejected)
+                self._active_plan_viewer = card
+                self._streaming_plan_card = None
+            else:
+                viewer = PlanViewer(plan_data, parent=self.chat_container)
+                viewer.planConfirmed.connect(self._on_plan_confirmed)
+                viewer.planRejected.connect(self._on_plan_rejected)
+                self._active_plan_viewer = viewer
+                self.chat_layout.insertWidget(self.chat_layout.count() - 1, viewer)
+            self._scroll_to_bottom(force=True)
+        except Exception as e:
+            print(f"[Plan] Render PlanViewer error: {e}")
+
+    @QtCore.Slot(str, str, str)
+    def _on_update_plan_step(self, step_id: str, status: str, result_summary: str):
+        """主线程：更新 PlanViewer 卡片中的步骤状态"""
+        if self._active_plan_viewer:
+            try:
+                self._active_plan_viewer.update_step_status(step_id, status, result_summary)
+            except Exception as e:
+                print(f"[Plan] Update step UI error: {e}")
+
+    def _on_plan_confirmed(self, plan_data: dict):
+        """用户点击 Confirm 按钮 → 启动执行阶段"""
+        self._plan_phase = 'executing'
+        if self._active_plan_viewer:
+            self._active_plan_viewer.set_confirmed()
+
+        exec_msg = tr('ai.plan_confirmed_msg', plan_data.get('title', 'Plan'))
+        self._conversation_history.append({
+            'role': 'user', 'content': exec_msg
+        })
+
+        self._set_running(True)
+        self._add_ai_response()
+        self._agent_response = self._current_response
+        self._start_active_aurora()
+
+        agent_params = getattr(self, '_last_agent_params', {}).copy()
+        agent_params['use_agent'] = True
+        agent_params['plan_mode'] = True
+        agent_params['plan_executing'] = True
+        agent_params['plan_data'] = plan_data
+
+        thread = threading.Thread(
+            target=self._run_agent, args=(agent_params,), daemon=True
+        )
+        thread.start()
+
+    def _on_plan_rejected(self):
+        """用户点击 Reject 按钮 → 丢弃 Plan"""
+        self._plan_phase = 'idle'
+        try:
+            if self._plan_manager is None:
+                self._plan_manager = get_plan_manager()
+            self._plan_manager.delete_plan(self._session_id)
+        except Exception:
+            pass
+        if self._active_plan_viewer:
+            self._active_plan_viewer.set_rejected()
+        self._active_plan_viewer = None
+
+    @QtCore.Slot(str, str, str)
+    def _on_tool_args_delta(self, tool_name: str, delta: str, accumulated: str):
+        """主线程 slot：处理 tool_call 参数增量，流式 Plan 生成进度"""
+        try:
+            if tool_name == 'create_plan':
+                if self._streaming_plan_card is None:
+                    self._on_create_streaming_plan()
+                self._show_plan_generation_progress(accumulated)
+                self._updateStreamingPlan.emit(accumulated)
+                return
+        except RuntimeError:
+            pass
     
-    @QtCore.Slot(str, dict)
-    def _on_execute_tool_main_thread(self, tool_name: str, kwargs: dict):
-        """主线程工具执行（Wwise 一般不需要，保留兼容性）"""
+    @QtCore.Slot(str)
+    def _on_show_planning(self, progress: str):
+        """显示 Planning... 进度"""
+        try:
+            if hasattr(self, 'thinking_bar'):
+                self.thinking_bar.show_planning(progress)
+        except (RuntimeError, AttributeError):
+            pass
         result = {"success": False, "error": tr('ai.unknown_err')}
         try:
             result = self.mcp.execute_tool(tool_name, kwargs)
@@ -1751,6 +2065,7 @@ Memory System:
             'context_limit': self._get_current_context_limit(),
             'supports_vision': self._current_model_supports_vision(),
             'scene_context': self._collect_scene_context(),  # ★ 主线程收集 Wwise 场景上下文
+            'plan_mode': self._plan_mode,  # ★ Plan 模式标记
         }
         
         self._save_model_preference()
@@ -1767,6 +2082,8 @@ Memory System:
         context_limit = agent_params['context_limit']
         supports_vision = agent_params.get('supports_vision', True)
         scene_context = agent_params.get('scene_context', {})
+        plan_mode = agent_params.get('plan_mode', False)
+        plan_executing = agent_params.get('plan_executing', False)
         
         self._last_agent_params = agent_params
         self._think_enabled = use_think
@@ -1774,8 +2091,21 @@ Memory System:
         try:
             sys_prompt = self._cached_prompt_think if use_think else self._cached_prompt_no_think
             
-            if not use_agent:
+            # ★ Ask 模式：追加只读约束
+            if not use_agent and not plan_mode:
                 sys_prompt = sys_prompt + tr('ai.ask_mode_prompt')
+            
+            # ★ Plan 模式：追加规划或执行阶段提示词
+            if plan_mode:
+                if plan_executing:
+                    sys_prompt = sys_prompt + tr('ai.plan_mode_execution_prompt')
+                else:
+                    self._plan_phase = 'planning'
+                    sys_prompt = sys_prompt + tr('ai.plan_mode_planning_prompt')
+            
+            # ★ Agent 模式：追加复杂任务建议切换 Plan 的提示
+            if use_agent and not plan_mode:
+                sys_prompt = sys_prompt + tr('ai.agent_suggest_plan_prompt')
             
             messages = [{'role': 'system', 'content': sys_prompt}]
             
@@ -1851,6 +2181,17 @@ Memory System:
                         messages.append({'role': 'system', 'content': memory_context})
             except Exception as e:
                 print(f"[Memory] Context injection failed: {e}")
+            
+            # ★ Plan 执行阶段：注入 Plan 上下文
+            if plan_mode and plan_executing:
+                try:
+                    if self._plan_manager is None:
+                        self._plan_manager = get_plan_manager()
+                    plan_ctx = self._plan_manager.get_plan_for_context(self._session_id)
+                    if plan_ctx:
+                        messages.append({'role': 'system', 'content': plan_ctx})
+                except Exception as e:
+                    print(f"[Plan] Context injection failed: {e}")
             
             # 预发送压缩
             if self._auto_optimize:
@@ -1936,31 +2277,80 @@ Memory System:
                 cleaned_messages.append(clean_msg)
             messages = cleaned_messages
             
-            # 工具定义
-            if not use_agent:
+            # 工具定义（使用 UltraOptimizer 优化 emoji）
+            if plan_mode and not plan_executing:
+                # ★ Plan 规划阶段：只读工具 + create_plan + ask_question
+                plan_filtered = [t for t in WWISE_TOOLS
+                                 if t['function']['name'] in self._PLAN_PLANNING_TOOLS]
+                plan_filtered.append(PLAN_TOOL_CREATE)
+                plan_filtered.append(PLAN_TOOL_ASK_QUESTION)
+                if not use_web:
+                    plan_filtered = [t for t in plan_filtered
+                                     if t['function']['name'] not in ('web_search', 'fetch_webpage')]
+                tools = UltraOptimizer.optimize_tool_definitions(plan_filtered)
+            elif plan_mode and plan_executing:
+                # ★ Plan 执行阶段：完整工具 + update_plan_step
+                exec_tools = list(WWISE_TOOLS) + [PLAN_TOOL_UPDATE_STEP]
+                if not use_web:
+                    exec_tools = [t for t in exec_tools
+                                  if t['function']['name'] not in ('web_search', 'fetch_webpage')]
+                tools = UltraOptimizer.optimize_tool_definitions(exec_tools)
+            elif not use_agent:
+                # ★ Ask 模式：只保留只读/查询工具
                 ask_filtered = [t for t in WWISE_TOOLS
                                 if t['function']['name'] in self._ASK_MODE_TOOLS]
                 if not use_web:
                     ask_filtered = [t for t in ask_filtered
                                     if t['function']['name'] not in ('web_search', 'fetch_webpage')]
-                tools = ask_filtered
+                tools = UltraOptimizer.optimize_tool_definitions(ask_filtered)
             elif use_web:
                 if self._cached_optimized_tools is None:
-                    self._cached_optimized_tools = WWISE_TOOLS
+                    self._cached_optimized_tools = UltraOptimizer.optimize_tool_definitions(WWISE_TOOLS)
                 tools = self._cached_optimized_tools
             else:
                 if self._cached_optimized_tools_no_web is None:
-                    self._cached_optimized_tools_no_web = [
-                        t for t in WWISE_TOOLS if t['function']['name'] not in ('web_search', 'fetch_webpage')
-                    ]
+                    filtered = [t for t in WWISE_TOOLS if t['function']['name'] not in ('web_search', 'fetch_webpage')]
+                    self._cached_optimized_tools_no_web = UltraOptimizer.optimize_tool_definitions(filtered)
                 tools = self._cached_optimized_tools_no_web
+            
+            # ★ Plan 模式的静默工具集合
+            _silent = self._SILENT_TOOLS | self._PLAN_SILENT_TOOLS if plan_mode else self._SILENT_TOOLS
             
             _on_iter = lambda i: self._showGenerating.emit()
             
             # 保存 agent 参数供反思钩子使用
             self._last_agent_params = agent_params
             
-            if use_agent:
+            if plan_mode:
+                # ★ Plan 模式：使用 agent loop（规划或执行阶段均走此分支）
+                _max_iter = 999 if plan_executing else 20
+                result = self.client.agent_loop_auto(
+                    messages=messages,
+                    model=model,
+                    provider=provider,
+                    max_iterations=_max_iter,
+                    max_tokens=None,
+                    enable_thinking=use_think,
+                    supports_vision=supports_vision,
+                    tools_override=tools,
+                    on_content=lambda c: self._on_content_with_limit(c),
+                    on_thinking=lambda t: self._on_thinking_chunk(t),
+                    on_tool_call=lambda n, a: (
+                        None  # create_plan 已在 on_tool_args_delta 中处理
+                        if n == 'create_plan' else
+                        (self._addStatus.emit(f"[tool]{n}"), self._showToolStatus.emit(n))
+                        if n not in _silent else None
+                    ),
+                    on_tool_result=lambda n, a, r: (
+                        (self._add_tool_result(n, r, a), self._hideToolStatus.emit())
+                        if n not in _silent else None
+                    ),
+                    on_tool_args_delta=lambda name, delta, acc: (
+                        self._toolArgsDelta.emit(name, delta, acc)
+                    ),
+                    on_iteration_start=_on_iter,
+                )
+            elif use_agent:
                 result = self.client.agent_loop_auto(
                     messages=messages,
                     model=model,

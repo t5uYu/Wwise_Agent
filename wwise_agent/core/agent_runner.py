@@ -96,6 +96,43 @@ class AgentRunnerMixin:
         'update_todo',
     })
 
+    # ★ Plan 模式规划阶段白名单：只读工具 + create_plan + ask_question
+    _PLAN_PLANNING_TOOLS = frozenset({
+        # 查询 & 检查（复用 Ask 模式）
+        'get_project_hierarchy',
+        'get_object_properties',
+        'search_objects',
+        'get_bus_topology',
+        'get_event_actions',
+        'get_soundbank_info',
+        'get_rtpc_list',
+        'get_selected_objects',
+        'get_effect_chain',
+        'verify_structure',
+        'verify_event_completeness',
+        # 文档 & 搜索
+        'web_search',
+        'fetch_webpage',
+        # 任务管理
+        'add_todo',
+        'update_todo',
+        # ★ Plan 专用
+        'create_plan',
+        'ask_question',
+    })
+
+    # ★ Plan 模式执行阶段附加工具
+    _PLAN_EXECUTION_EXTRA_TOOLS = frozenset({
+        'update_plan_step',
+    })
+
+    # ★ Plan 模式静默工具（不在 UI 执行列表中显示）
+    _PLAN_SILENT_TOOLS = frozenset({
+        'create_plan',
+        'update_plan_step',
+        'ask_question',
+    })
+
     # ---------- 自动 AI 标题生成 ----------
 
     def _maybe_generate_title(self, session_id: str, history: list):
