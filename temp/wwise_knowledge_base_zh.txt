@@ -165,6 +165,17 @@ Event 是游戏与 Wwise 通信的主要机制。
 - Delay：执行前的延迟时间
 - Fade-in/Fade-out：渐变效果
 
+**播放前预检（关键要求）：**
+在执行 Play 事件之前，必须验证所需资源是否存在，避免执行空指令：
+1. 检查目标音频源文件是否存在（Sound 对象是否已导入有效的音频媒体）
+2. 检查对应的 Event 是否存在于项目中
+3. 检查 Event 是否包含有效的 Action，且 Action 的目标对象存在
+4. 如果任何检查失败，应报告问题而不是执行空指令
+- 没有有效目标的 Event 会静默执行，不产生任何音频输出，导致调试困难
+- 没有导入音频媒体的 Sound 对象同样会产生静默
+- 使用 ak.wwise.core.object.get 在 ak.wwise.core.transport.executeAction 之前验证对象是否存在
+- 使用 "isPlayable" 返回选项检查对象是否真正可以产生音频
+
 **命名规范（最佳实践）：**
 - Play_[对象名]：如 Play_Footstep、Play_Music_Combat
 - Stop_[对象名]：如 Stop_Music_Combat
@@ -453,6 +464,13 @@ Wwise 对象上的常用属性：
 - 对远距离/低音量声音使用 Virtual Voice
 - 确定重要声音的优先级（对话 > 音效 > 环境音）
 - 最小化活跃的效果器链
+
+**播放前检查：**
+- 在触发事件前，始终验证 Event 是否存在
+- 验证 Event 是否包含有效的 Action 且 Action 目标已分配
+- 检查 Sound 对象是否已导入音频文件（非空占位符）
+- 使用 WAAPI 查询在播放前验证，避免静默失败
+- 当尝试播放不存在或不完整的音频链时，记录警告日志
 
 **游戏对象管理：**
 - 在触发事件前注册游戏对象

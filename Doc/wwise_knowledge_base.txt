@@ -170,6 +170,17 @@ Events are the primary mechanism for game-to-Wwise communication.
 - Delay: Time offset before action executes
 - Fade-in/Fade-out: Gradual volume changes
 
+**Pre-Playback Validation (Critical):**
+Before executing a Play event, always verify that the required resources exist to avoid executing empty/invalid commands:
+1. Check if the target audio source file exists (Sound object has valid media assigned)
+2. Check if the corresponding Event exists in the project
+3. Check if the Event has valid Actions pointing to existing target objects
+4. If any check fails, report the issue instead of executing an empty command
+- An Event without a valid target will execute silently with no audio output, making debugging difficult
+- A Sound object without imported audio media will also produce silence
+- Use ak.wwise.core.object.get to verify object existence before ak.wwise.core.transport.executeAction
+- Use the "isPlayable" return option to check if an object can actually produce audio
+
 **Naming Conventions (Best Practice):**
 - Play_[ObjectName]: e.g., Play_Footstep, Play_Music_Combat
 - Stop_[ObjectName]: e.g., Stop_Music_Combat
@@ -473,6 +484,13 @@ Best practices for integrating Wwise with game engines.
 - Use virtual voices for distant/quiet sounds
 - Prioritize important sounds (dialogue > SFX > ambience)
 - Minimize active effects chains
+
+**Pre-Playback Checks:**
+- Always verify that the Event exists before posting it
+- Verify the Event has valid Actions with assigned targets
+- Check that Sound objects have audio files imported (not empty placeholders)
+- Use WAAPI queries to validate before playback to avoid silent failures
+- Log warnings when attempting to play non-existent or incomplete audio chains
 
 **Game Object Management:**
 - Register game objects before posting events

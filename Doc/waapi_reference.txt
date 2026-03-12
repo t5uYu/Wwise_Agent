@@ -369,7 +369,90 @@ client.call(
 
 Control audio playback in the Wwise Authoring tool.
 
-Create transport and play:
+**IMPORTANT: Pre-Playback Validation**
+Before creating a transport and playing audio, always verify that the target Event and its audio sources exist. Executing a play command on a non-existent Event or an Event with no valid audio target will fail silently, producing no output and making debugging difficult.
+
+Validate before playback (recommended pattern):
+```python
+def validate_and_play(client, event_path):
+    """Validate that an Event exists and has playable content before playing."""
+    
+    # Step 1: Check if the Event exists
+    event_result = client.call(
+        "ak.wwise.core.object.get",
+        {
+            "from": {"path": [event_path]}
+        },
+        options={"return": ["id", "name", "type", "path", "isPlayable"]}
+    )
+    
+    if not event_result or not event_result.get("return"):
+        print(f"Error: Event not found at path: {event_path}")
+        return False
+    
+    event_info = event_result["return"][0]
+    
+    # Step 2: Check if the Event is playable
+    if not event_info.get("isPlayable", False):
+        print(f"Warning: Event '{event_info['name']}' exists but is not playable (no valid audio target)")
+        return False
+    
+    # Step 3: Verify the Event has child Actions with valid targets
+    children_result = client.call(
+        "ak.wwise.core.object.get",
+        {
+            "from": {"path": [event_path]},
+            "transform": [{"select": ["children"]}]
+        },
+        options={"return": ["id", "name", "type"]}
+    )
+    
+    if not children_result or not children_result.get("return"):
+        print(f"Warning: Event '{event_info['name']}' has no Actions defined")
+        return False
+    
+    # Step 4: All checks passed, proceed to play
+    transport = client.call(
+        "ak.wwise.core.transport.create",
+        {"object": event_path}
+    )
+    
+    transport_id = transport["transport"]
+    
+    client.call(
+        "ak.wwise.core.transport.executeAction",
+        {"transport": transport_id, "action": "play"}
+    )
+    
+    print(f"Playing: {event_info['name']}")
+    return transport_id
+
+
+def validate_sound_has_media(client, sound_path):
+    """Check if a Sound object has audio media imported."""
+    result = client.call(
+        "ak.wwise.core.object.get",
+        {
+            "from": {"path": [sound_path]},
+            "transform": [{"select": ["children"]}]
+        },
+        options={"return": ["id", "name", "type", "path"]}
+    )
+    
+    if not result or not result.get("return"):
+        print(f"Warning: Sound '{sound_path}' has no audio source imported")
+        return False
+    
+    # Check for AudioFileSource children
+    sources = [obj for obj in result["return"] if obj.get("type") == "AudioFileSource"]
+    if not sources:
+        print(f"Warning: Sound '{sound_path}' has no AudioFileSource - audio file not imported")
+        return False
+    
+    return True
+```
+
+Basic transport create and play (without validation):
 ```python
 # Create a transport for an object
 transport = client.call(
