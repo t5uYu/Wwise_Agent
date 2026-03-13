@@ -519,8 +519,8 @@ Agent：[按计划逐步执行 Bus 创建、路由调整、验证]
 ## 作者
 
 tsuyu
+KazamaSuichiku(翠竹,meshy,指导老师)
 
 ## 许可证
 
 MIT
-KazamaSuichiku(翠竹,meshy)
