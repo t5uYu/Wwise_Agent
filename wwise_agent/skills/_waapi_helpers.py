@@ -44,6 +44,13 @@ COMMON_PROPERTIES = {
     "CrossfadeParameter", "BlendTrackName",
     "Notes", "Color",
     "OverrideOutput",
+    # Streaming 相关
+    "IsStreamingEnabled", "IsStreamingPrefetchEnabled",
+    "PrefetchLength",
+    # 额外常用属性
+    "IsLoopingEnabled", "LoopCount",
+    "InitialDelay", "RandomizerEnabled",
+    "PlayMechanismLoop", "PlayMechanismSpecialTransitions",
 }
 
 # Effect 插件 classId 映射

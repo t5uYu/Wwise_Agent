@@ -346,7 +346,7 @@ class WebSearcher:
 
 
 # ============================================================
-# Wwise 工具定义（26 个）
+# Wwise 工具定义（30 个）
 # ============================================================
 
 WWISE_TOOLS = [
@@ -722,6 +722,163 @@ WWISE_TOOLS = [
             }
         }
     },
+    # ---- 批量操作工具 (4) ----
+    {
+        "type": "function",
+        "function": {
+            "name": "batch_create",
+            "description": "批量创建多个 Wwise 对象。flat 模式：在同一父节点下创建多个同级对象；tree 模式：一次创建嵌套层级结构。全部操作可一键撤销。",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "parent_path": {
+                        "type": "string",
+                        "description": "父节点路径"
+                    },
+                    "objects": {
+                        "type": "array",
+                        "items": {
+                            "type": "object",
+                            "properties": {
+                                "name": {"type": "string"},
+                                "type": {"type": "string"},
+                                "notes": {"type": "string"},
+                                "properties": {"type": "object"},
+                                "children": {"type": "array"}
+                            },
+                            "required": ["name", "type"]
+                        },
+                        "description": "flat 模式：对象数组，每项含 name, type, notes(可选), properties(可选), children(可选)"
+                    },
+                    "tree": {
+                        "type": "object",
+                        "description": "tree 模式：嵌套结构，含 name, type, children(递归), notes(可选)"
+                    },
+                    "on_conflict": {
+                        "type": "string",
+                        "enum": ["rename", "fail", "merge", "replace"],
+                        "description": "同名冲突策略，默认 rename"
+                    }
+                },
+                "required": ["parent_path"]
+            }
+        }
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "batch_set_property",
+            "description": "批量设置多个对象的属性。模式1: targets + properties 统一设置相同属性；模式2: items 数组为不同对象设不同属性；模式3: type_filter 按类型自动筛选目标。支持 Streaming、Volume、Positioning 等所有常用属性。",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "targets": {
+                        "type": "array",
+                        "items": {"type": "string"},
+                        "description": "对象路径列表（模式1）"
+                    },
+                    "properties": {
+                        "type": "object",
+                        "description": "属性名→值的字典"
+                    },
+                    "items": {
+                        "type": "array",
+                        "items": {
+                            "type": "object",
+                            "properties": {
+                                "path": {"type": "string"},
+                                "properties": {"type": "object"}
+                            },
+                            "required": ["path", "properties"]
+                        },
+                        "description": "模式2：每项含 path 和 properties"
+                    },
+                    "type_filter": {
+                        "type": "string",
+                        "description": "按类型过滤（如 'Sound'），自动对所有该类型对象设置属性"
+                    },
+                    "name_filter": {
+                        "type": "string",
+                        "description": "配合 type_filter，按名称关键词进一步过滤"
+                    }
+                },
+                "required": []
+            }
+        }
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "batch_delete",
+            "description": "批量删除多个 Wwise 对象。支持路径列表或按类型+名称过滤。默认检查引用关系避免误删。支持 dry_run 试运行预览。",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "paths": {
+                        "type": "array",
+                        "items": {"type": "string"},
+                        "description": "要删除的对象路径列表"
+                    },
+                    "type_filter": {
+                        "type": "string",
+                        "description": "按类型过滤（如 'Sound'）"
+                    },
+                    "name_filter": {
+                        "type": "string",
+                        "description": "名称关键词过滤"
+                    },
+                    "force": {
+                        "type": "boolean",
+                        "description": "跳过引用检查强制删除，默认 false"
+                    },
+                    "dry_run": {
+                        "type": "boolean",
+                        "description": "试运行：只预览将删除的对象，不实际执行"
+                    }
+                },
+                "required": []
+            }
+        }
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "batch_move",
+            "description": "批量移动多个 Wwise 对象到新父节点。模式1: source_paths 全部移到同一 target_parent；模式2: items 数组独立映射。",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "source_paths": {
+                        "type": "array",
+                        "items": {"type": "string"},
+                        "description": "要移动的对象路径列表"
+                    },
+                    "target_parent": {
+                        "type": "string",
+                        "description": "目标父节点路径"
+                    },
+                    "items": {
+                        "type": "array",
+                        "items": {
+                            "type": "object",
+                            "properties": {
+                                "source_path": {"type": "string"},
+                                "target_parent": {"type": "string"}
+                            },
+                            "required": ["source_path", "target_parent"]
+                        },
+                        "description": "独立映射模式"
+                    },
+                    "on_conflict": {
+                        "type": "string",
+                        "enum": ["rename", "fail", "replace"],
+                        "description": "同名冲突策略，默认 rename"
+                    }
+                },
+                "required": []
+            }
+        }
+    },
     # ---- 验证工具 (2) ----
     {
         "type": "function",
@@ -966,6 +1123,7 @@ class AIClient:
         'assign_bus', 'delete_object', 'move_object',
         'preview_event', 'set_rtpc_binding', 'add_effect', 'remove_effect',
         'execute_waapi',
+        'batch_create', 'batch_set_property', 'batch_delete', 'batch_move',
     })
 
     @staticmethod
